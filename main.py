@@ -13,57 +13,67 @@ from synthesizer import synthesize_briefing
 from delivery import post_to_slack, send_email, send_email_to
 
 
-def run_for_email(email: str):
-    """Run the pipeline and email the result to a specific address."""
-    print(f"  Generating briefing for {email}...")
+def run_for_email(email: str, status_callback=None):
+    """Run the pipeline and email the result to a specific address.
+
+    If status_callback is provided, it's called with (step_name, status)
+    for real-time progress updates.
+    """
+    def update(step_id, message, status="ok"):
+        if status_callback:
+            status_callback(step_id, message, status)
+        print(f"  [{status}] {message}")
+
     errors = []
 
-    try:
-        market = get_market_data()
-    except Exception as e:
-        errors.append(f"Market data failed: {e}")
-        market = {"tokens": [], "btc_dominance": 0, "total_market_cap_usd": 0,
-                  "market_cap_change_24h_pct": 0}
+    steps = [
+        ("market",   "Market data",    lambda: get_market_data()),
+        ("funding",  "Funding rates",  lambda: get_funding_rates()),
+        ("social",   "Social metrics", lambda: get_social_metrics()),
+        ("trending", "Trending tokens",lambda: get_trending_tokens()),
+        ("news",     "News",           lambda: get_news()),
+        ("kol",      "KOL tweets",     lambda: get_kol_tweets()),
+    ]
 
-    try:
-        funding = get_funding_rates()
-    except Exception as e:
-        errors.append(f"Funding rates failed: {e}")
-        funding = []
+    defaults = {
+        "market": {"tokens": [], "btc_dominance": 0, "total_market_cap_usd": 0,
+                   "market_cap_change_24h_pct": 0},
+        "funding": [], "social": [], "trending": [], "news": [], "kol": [],
+    }
 
-    try:
-        social = get_social_metrics()
-    except Exception as e:
-        errors.append(f"Social metrics failed: {e}")
-        social = []
-
-    try:
-        trending = get_trending_tokens()
-    except Exception as e:
-        errors.append(f"Trending failed: {e}")
-        trending = []
-
-    try:
-        news = get_news()
-    except Exception as e:
-        errors.append(f"News failed: {e}")
-        news = []
-
-    try:
-        kol_tweets = get_kol_tweets()
-    except Exception as e:
-        errors.append(f"KOL tweets failed: {e}")
-        kol_tweets = []
+    results = {}
+    for step_id, label, fetch_fn in steps:
+        update(step_id, f"Fetching {label.lower()}...", "loading")
+        try:
+            results[step_id] = fetch_fn()
+            count = len(results[step_id]) if isinstance(results[step_id], list) else None
+            done_msg = f"{label} loaded"
+            if count is not None:
+                done_msg += f" — {count} items"
+            update(step_id, done_msg, "ok")
+        except Exception as e:
+            errors.append(f"{label} failed: {e}")
+            results[step_id] = defaults[step_id]
+            update(step_id, f"{label} failed", "error")
 
     portfolio = get_portfolio()
 
-    enriched = enrich_data(market, funding, social, trending, news, portfolio,
-                           kol_tweets=kol_tweets)
+    update("enrich", "Enriching data...", "loading")
+    enriched = enrich_data(
+        results["market"], results["funding"], results["social"],
+        results["trending"], results["news"], portfolio,
+        kol_tweets=results["kol"],
+    )
     enriched["data_source_errors"] = errors
+    update("enrich", "Data enriched", "ok")
 
+    update("claude", "Generating brief with Claude AI...", "loading")
     briefing = synthesize_briefing(enriched)
+    update("claude", "Brief generated", "ok")
+
+    update("email", f"Sending to {email}...", "loading")
     send_email_to(briefing, email)
-    print(f"  ✅ Briefing sent to {email}")
+    update("email", f"Briefing sent to {email}!", "done")
 
 
 def run():

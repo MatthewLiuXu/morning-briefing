@@ -11,6 +11,8 @@ SLACK_WEBHOOK_URL = os.getenv("SLACK_WEBHOOK_URL")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 EMAIL_FROM = os.getenv("EMAIL_FROM", "briefing@resend.dev")
 EMAIL_TO = os.getenv("EMAIL_TO")  # comma-separated list of recipient emails
+GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
+GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
 # --- Twitter / KOL Tracking ---
 TWITTER_API_KEY = os.getenv("TWITTER_API_KEY")

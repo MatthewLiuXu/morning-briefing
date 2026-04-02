@@ -1,11 +1,12 @@
 import os
-import threading
-from flask import Flask, request, jsonify, render_template_string
+import json
+import queue
+from flask import Flask, request, jsonify, render_template_string, Response
 from main import run_for_email
 
 app = Flask(__name__)
 
-GITHUB_REPO_URL = os.getenv("GITHUB_REPO_URL", "https://github.com/yourname/morning-briefing")
+GITHUB_REPO_URL = os.getenv("GITHUB_REPO_URL", "https://github.com/matthewliu10/morning-briefing")
 
 LANDING_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -21,18 +22,19 @@ LANDING_PAGE = """<!DOCTYPE html>
     display: flex; justify-content: center; align-items: center;
     min-height: 100vh; padding: 20px;
   }
-  .container { max-width: 480px; width: 100%; text-align: center; }
+  .container { max-width: 520px; width: 100%; text-align: center; }
   h1 { font-size: 2rem; margin-bottom: 8px; color: #fff; }
-  .subtitle { color: #888; font-size: 1rem; margin-bottom: 32px; }
+  .subtitle { color: #888; font-size: 1rem; margin-bottom: 32px; line-height: 1.4; }
   .card {
     background: #161616; border: 1px solid #2a2a2a; border-radius: 12px;
-    padding: 32px; margin-bottom: 24px;
+    padding: 32px; margin-bottom: 24px; text-align: left;
   }
-  .card p { color: #aaa; font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px; }
+  .card p { color: #aaa; font-size: 0.95rem; line-height: 1.6; margin-bottom: 20px; text-align: center; }
   input[type="email"] {
     width: 100%; padding: 14px 16px; border-radius: 8px;
     border: 1px solid #333; background: #0a0a0a; color: #fff;
     font-size: 1rem; margin-bottom: 12px; outline: none;
+    transition: border-color 0.2s;
   }
   input[type="email"]:focus { border-color: #4f8ff7; }
   button {
@@ -41,72 +43,142 @@ LANDING_PAGE = """<!DOCTYPE html>
     cursor: pointer; transition: background 0.2s;
   }
   button:hover { background: #3a7de0; }
-  button:disabled { background: #333; cursor: not-allowed; }
-  .status { margin-top: 16px; font-size: 0.9rem; min-height: 24px; }
-  .status.success { color: #4ade80; }
-  .status.error { color: #f87171; }
-  .status.loading { color: #fbbf24; }
+  button:disabled { background: #333; color: #666; cursor: not-allowed; }
+
+  /* Progress log */
+  #log {
+    display: none; margin-top: 20px; padding: 16px;
+    background: #0a0a0a; border: 1px solid #222; border-radius: 8px;
+    font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.8rem;
+    max-height: 320px; overflow-y: auto;
+  }
+  #log.active { display: block; }
+  .log-entry {
+    padding: 6px 0; border-bottom: 1px solid #1a1a1a;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .log-entry:last-child { border-bottom: none; }
+  .log-icon { width: 18px; text-align: center; flex-shrink: 0; }
+  .log-text { color: #aaa; }
+  .log-entry.loading .log-text { color: #fbbf24; }
+  .log-entry.ok .log-text { color: #4ade80; }
+  .log-entry.error .log-text { color: #f87171; }
+  .log-entry.done .log-text { color: #4ade80; font-weight: 600; }
+
+  .spinner {
+    width: 14px; height: 14px; border: 2px solid #333;
+    border-top-color: #fbbf24; border-radius: 50%;
+    animation: spin 0.8s linear infinite; display: inline-block;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .bottom-links { margin-top: 20px; }
   .code-link {
-    display: inline-block; margin-top: 8px; color: #4f8ff7;
+    display: inline-block; color: #4f8ff7;
     text-decoration: none; font-size: 0.9rem;
   }
   .code-link:hover { text-decoration: underline; }
-  .features { text-align: left; margin-top: 24px; }
-  .features li { color: #888; font-size: 0.85rem; margin-bottom: 8px; list-style: none; }
-  .features li::before { content: "→ "; color: #4f8ff7; }
+
+  .features {
+    text-align: left; margin-top: 24px;
+    columns: 2; column-gap: 16px;
+  }
+  .features li {
+    color: #666; font-size: 0.8rem; margin-bottom: 6px;
+    list-style: none; break-inside: avoid;
+  }
+  .features li::before { content: "  "; }
 </style>
 </head>
 <body>
 <div class="container">
   <h1>Crypto Morning Briefing</h1>
-  <p class="subtitle">AI-powered daily brief for crypto portfolio managers</p>
+  <p class="subtitle">AI-powered daily brief for crypto portfolio managers.<br>
+  Real data. Delivered to your inbox in under 60 seconds.</p>
+
   <div class="card">
-    <p>Get a sample morning briefing delivered to your inbox — real market data, funding rates, social sentiment, and news synthesized by Claude AI.</p>
+    <p>Enter your email to receive a live briefing with market data, funding rates, KOL tweets, and news.</p>
     <form id="form">
       <input type="email" id="email" placeholder="you@company.com" required>
       <button type="submit" id="btn">Send me a briefing</button>
     </form>
-    <div class="status" id="status"></div>
+    <div id="log"></div>
   </div>
-  <a class="code-link" href="{{ repo_url }}" target="_blank">View the source code on GitHub ↗</a>
+
+  <div class="bottom-links">
+    <a class="code-link" href="{{ repo_url }}" target="_blank">View source on GitHub</a>
+  </div>
+
   <ul class="features">
-    <li>Portfolio PnL tracking with overnight change</li>
-    <li>Perpetual funding rates from Hyperliquid</li>
-    <li>Social sentiment via CoinPaprika + CoinGecko trending</li>
-    <li>News headlines with portfolio implications</li>
-    <li>All synthesized into a 2-minute read by Claude</li>
+    <li>Portfolio PnL</li>
+    <li>Funding rates</li>
+    <li>KOL Twitter feed</li>
+    <li>Trending tokens</li>
+    <li>Social sentiment</li>
+    <li>News headlines</li>
   </ul>
 </div>
+
 <script>
-document.getElementById('form').addEventListener('submit', async (e) => {
+const icons = {
+  loading: '<span class="spinner"></span>',
+  ok: '&#10003;',
+  error: '&#10007;',
+  done: '&#10003;'
+};
+
+document.getElementById('form').addEventListener('submit', (e) => {
   e.preventDefault();
   const btn = document.getElementById('btn');
-  const status = document.getElementById('status');
+  const log = document.getElementById('log');
   const email = document.getElementById('email').value;
+
   btn.disabled = true;
-  btn.textContent = 'Generating briefing...';
-  status.className = 'status loading';
-  status.textContent = 'Fetching market data and generating your brief — this takes ~30 seconds...';
-  try {
-    const resp = await fetch('/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email })
-    });
-    const data = await resp.json();
-    if (data.ok) {
-      status.className = 'status success';
-      status.textContent = 'Briefing sent! Check your inbox.';
+  btn.textContent = 'Generating...';
+  log.innerHTML = '';
+  log.className = 'active';
+
+  const evtSource = new EventSource('/stream?email=' + encodeURIComponent(email));
+
+  evtSource.onmessage = (event) => {
+    const data = JSON.parse(event.data);
+
+    // If a "loading" entry for this step exists, replace it
+    const existing = document.getElementById('step-' + data.step_id);
+    if (existing) {
+      existing.className = 'log-entry ' + data.status;
+      existing.querySelector('.log-icon').innerHTML = icons[data.status];
+      existing.querySelector('.log-text').textContent = data.message;
     } else {
-      status.className = 'status error';
-      status.textContent = data.error || 'Something went wrong.';
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + data.status;
+      entry.id = 'step-' + data.step_id;
+      entry.innerHTML = '<span class="log-icon">' + icons[data.status] + '</span>'
+                       + '<span class="log-text">' + data.message + '</span>';
+      log.appendChild(entry);
     }
-  } catch (err) {
-    status.className = 'status error';
-    status.textContent = 'Network error — please try again.';
-  }
-  btn.disabled = false;
-  btn.textContent = 'Send me a briefing';
+    log.scrollTop = log.scrollHeight;
+
+    if (data.status === 'done') {
+      evtSource.close();
+      btn.disabled = false;
+      btn.textContent = 'Send me a briefing';
+    }
+  };
+
+  evtSource.onerror = () => {
+    evtSource.close();
+    // Check if we already got a "done" message
+    if (!document.querySelector('.log-entry.done')) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry error';
+      entry.innerHTML = '<span class="log-icon">&#10007;</span>'
+                       + '<span class="log-text">Connection lost. Please try again.</span>';
+      log.appendChild(entry);
+    }
+    btn.disabled = false;
+    btn.textContent = 'Send me a briefing';
+  };
 });
 </script>
 </body>
@@ -118,13 +190,48 @@ def index():
     return render_template_string(LANDING_PAGE, repo_url=GITHUB_REPO_URL)
 
 
+@app.route("/stream")
+def stream():
+    email = request.args.get("email", "").strip()
+    if not email or "@" not in email:
+        return jsonify({"ok": False, "error": "Invalid email"}), 400
+
+    q = queue.Queue()
+
+    def on_status(step_id, message, status):
+        q.put(json.dumps({"step_id": step_id, "message": message, "status": status}))
+
+    def generate():
+        import threading
+
+        def worker():
+            try:
+                run_for_email(email, status_callback=on_status)
+            except Exception as e:
+                q.put(json.dumps({"step_id": 999, "message": f"Error: {e}", "status": "error"}))
+            finally:
+                q.put(None)  # sentinel
+
+        t = threading.Thread(target=worker)
+        t.start()
+
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {item}\n\n"
+
+    return Response(generate(), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+# Keep the POST endpoint for backwards compatibility
 @app.route("/send", methods=["POST"])
 def send():
     data = request.get_json()
     email = data.get("email", "").strip()
     if not email or "@" not in email:
         return jsonify({"ok": False, "error": "Invalid email address."}), 400
-
     try:
         run_for_email(email)
         return jsonify({"ok": True})
@@ -133,5 +240,5 @@ def send():
 
 
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
