@@ -1,12 +1,17 @@
 import os
 import json
-import queue
-from flask import Flask, request, jsonify, render_template_string, Response
+import uuid
+import threading
+import traceback
+from flask import Flask, request, jsonify, render_template_string
 from main import run_for_email
 
 app = Flask(__name__)
 
 GITHUB_REPO_URL = os.getenv("GITHUB_REPO_URL", "https://github.com/matthewliu10/morning-briefing")
+
+# In-memory job store: job_id -> {steps: [...], finished: bool}
+jobs = {}
 
 LANDING_PAGE = """<!DOCTYPE html>
 <html lang="en">
@@ -127,7 +132,7 @@ const icons = {
   done: '&#10003;'
 };
 
-document.getElementById('form').addEventListener('submit', (e) => {
+document.getElementById('form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = document.getElementById('btn');
   const log = document.getElementById('log');
@@ -138,12 +143,9 @@ document.getElementById('form').addEventListener('submit', (e) => {
   log.innerHTML = '';
   log.className = 'active';
 
-  const evtSource = new EventSource('/stream?email=' + encodeURIComponent(email));
+  let seen = 0;
 
-  evtSource.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-
-    // If a "loading" entry for this step exists, replace it
+  function renderStep(data) {
     const existing = document.getElementById('step-' + data.step_id);
     if (existing) {
       existing.className = 'log-entry ' + data.status;
@@ -158,27 +160,41 @@ document.getElementById('form').addEventListener('submit', (e) => {
       log.appendChild(entry);
     }
     log.scrollTop = log.scrollHeight;
+  }
 
-    if (data.status === 'done') {
-      evtSource.close();
-      btn.disabled = false;
-      btn.textContent = 'Send me a briefing';
-    }
-  };
+  try {
+    // Start the job
+    const resp = await fetch('/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({email})
+    });
+    const {job_id} = await resp.json();
 
-  evtSource.onerror = () => {
-    evtSource.close();
-    // Check if we already got a "done" message
-    if (!document.querySelector('.log-entry.done')) {
-      const entry = document.createElement('div');
-      entry.className = 'log-entry error';
-      entry.innerHTML = '<span class="log-icon">&#10007;</span>'
-                       + '<span class="log-text">Connection lost. Please try again.</span>';
-      log.appendChild(entry);
+    // Poll for progress
+    while (true) {
+      await new Promise(r => setTimeout(r, 1000));
+      const pollResp = await fetch('/status/' + job_id + '?since=' + seen);
+      const pollData = await pollResp.json();
+
+      for (const step of pollData.steps) {
+        renderStep(step);
+        seen++;
+      }
+
+      if (pollData.finished) {
+        if (!document.querySelector('.log-entry.done')) {
+          renderStep({step_id: 'done', message: 'Complete!', status: 'done'});
+        }
+        break;
+      }
     }
-    btn.disabled = false;
-    btn.textContent = 'Send me a briefing';
-  };
+  } catch (err) {
+    renderStep({step_id: 'error', message: 'Request failed: ' + err.message, status: 'error'});
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Send me a briefing';
 });
 </script>
 </body>
@@ -190,48 +206,50 @@ def index():
     return render_template_string(LANDING_PAGE, repo_url=GITHUB_REPO_URL)
 
 
-@app.route("/stream")
-def stream():
-    email = request.args.get("email", "").strip()
+@app.route("/start", methods=["POST"])
+def start():
+    data = request.get_json()
+    email = data.get("email", "").strip()
     if not email or "@" not in email:
         return jsonify({"ok": False, "error": "Invalid email"}), 400
 
-    q = queue.Queue()
+    job_id = uuid.uuid4().hex[:12]
+    jobs[job_id] = {"steps": [], "finished": False}
 
     def on_status(step_id, message, status):
-        q.put(json.dumps({"step_id": step_id, "message": message, "status": status}))
+        jobs[job_id]["steps"].append({
+            "step_id": step_id, "message": message, "status": status
+        })
 
-    def generate():
-        import threading
-        import traceback
-
-        def worker():
-            try:
-                run_for_email(email, status_callback=on_status)
-            except Exception as e:
-                tb = traceback.format_exc()
-                print(f"[stream] Worker crashed: {e}\n{tb}")
-                q.put(json.dumps({"step_id": "crash", "message": f"Error: {e}", "status": "error"}))
-                q.put(json.dumps({"step_id": "done", "message": "Pipeline failed. Check server logs.", "status": "done"}))
-            finally:
-                q.put(None)  # sentinel
-
-        t = threading.Thread(target=worker)
-        t.start()
-
+    def worker():
         try:
-            while True:
-                item = q.get(timeout=120)
-                if item is None:
-                    break
-                yield f"data: {item}\n\n"
-        except queue.Empty:
-            print("[stream] Timed out waiting for worker after 120s")
-            yield f"data: {json.dumps({'step_id': 'timeout', 'message': 'Request timed out after 120s', 'status': 'error'})}\n\n"
-            yield f"data: {json.dumps({'step_id': 'done', 'message': 'Timed out', 'status': 'done'})}\n\n"
+            run_for_email(email, status_callback=on_status)
+        except Exception as e:
+            tb = traceback.format_exc()
+            print(f"[job {job_id}] Worker crashed: {e}\n{tb}")
+            jobs[job_id]["steps"].append({
+                "step_id": "crash", "message": f"Error: {e}", "status": "error"
+            })
+        finally:
+            jobs[job_id]["finished"] = True
 
-    return Response(generate(), mimetype="text/event-stream",
-                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    t = threading.Thread(target=worker, daemon=True)
+    t.start()
+
+    return jsonify({"ok": True, "job_id": job_id})
+
+
+@app.route("/status/<job_id>")
+def status(job_id):
+    job = jobs.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    since = int(request.args.get("since", 0))
+    return jsonify({
+        "steps": job["steps"][since:],
+        "finished": job["finished"],
+    })
 
 
 # Keep the POST endpoint for backwards compatibility
