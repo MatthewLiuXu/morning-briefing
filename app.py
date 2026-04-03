@@ -192,7 +192,6 @@ LANDING_PAGE = """<!DOCTYPE html>
       <div class="chip-grid" id="kol-chips"></div>
       <div style="margin-top:10px;display:flex;gap:8px">
         <input type="text" id="kol-handle" placeholder="Twitter handle" style="flex:1;background:#0a0a0a;border:1px solid #333;border-radius:4px;color:#e0e0e0;padding:5px 8px;font-size:0.85rem">
-        <input type="text" id="kol-name" placeholder="Display name" style="flex:1;background:#0a0a0a;border:1px solid #333;border-radius:4px;color:#e0e0e0;padding:5px 8px;font-size:0.85rem">
         <button class="add-btn" onclick="addKol()">+ Add</button>
       </div>
     </div>
@@ -347,18 +346,16 @@ function renderKols() {
     const chip = document.createElement('div');
     chip.className = 'chip' + (k.selected !== false ? ' selected' : '');
     chip.innerHTML = `<span class="check">${k.selected !== false ? '&#10003;' : ''}</span>
-      <span>@${k.handle} <span style="color:#666">(${k.name})</span></span>`;
+      <span>@${k.handle}</span>`;
     chip.onclick = () => { kols[i].selected = !kols[i].selected; renderKols(); };
     container.appendChild(chip);
   });
 }
 function addKol() {
   const handle = document.getElementById('kol-handle').value.trim();
-  const name = document.getElementById('kol-name').value.trim() || handle;
   if (!handle) return;
-  kols.push({handle, name, selected: true});
+  kols.push({handle, selected: true});
   document.getElementById('kol-handle').value = '';
-  document.getElementById('kol-name').value = '';
   renderKols();
 }
 
@@ -429,7 +426,7 @@ async function generate() {
   const config = {
     portfolio: portfolio,
     funding_symbols: fundingSymbols,
-    kols: kols.filter(k => k.selected !== false).map(k => ({handle: k.handle, name: k.name})),
+    kols: kols.filter(k => k.selected !== false).map(k => k.handle),
     enabled_sources: {
       market: document.getElementById('toggle-market').checked,
       funding: document.getElementById('toggle-funding').checked,
@@ -487,7 +484,7 @@ def index():
         tid: {"symbol": t["symbol"], "quantity": t["quantity"], "entry_price": t["entry_price"]}
         for tid, t in PORTFOLIO_TOKENS.items()
     })
-    kols_json = json.dumps([{"handle": k["handle"], "name": k["name"]} for k in CRYPTO_KOLS])
+    kols_json = json.dumps([{"handle": k} for k in CRYPTO_KOLS])
     funding_json = json.dumps(FUNDING_SYMBOLS)
     return render_template_string(
         LANDING_PAGE,

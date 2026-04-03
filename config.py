@@ -24,14 +24,14 @@ GMAIL_REFRESH_TOKEN = os.getenv("GMAIL_REFRESH_TOKEN")
 TWITTER_API_KEY = os.getenv("TWITTER_API_KEY")
 
 CRYPTO_KOLS = [
-    {"handle": "CryptoHayes", "name": "Arthur Hayes"},
-    {"handle": "VitalikButerin", "name": "Vitalik Buterin"},
-    {"handle": "inversebrah", "name": "inversebrah"},
-    {"handle": "GCRClassic", "name": "GCR"},
-    {"handle": "Pentosh1", "name": "Pentoshi"},
-    {"handle": "lightcrypto", "name": "Light"},
-    {"handle": "DegenSpartan", "name": "Degen Spartan"},
-    {"handle": "cburniske", "name": "Chris Burniske"},
+    "CryptoHayes",
+    "VitalikButerin",
+    "inversebrah",
+    "GCRClassic",
+    "Pentosh1",
+    "lightcrypto",
+    "DegenSpartan",
+    "cburniske",
 ]
 
 # --- Portfolio Tokens ---

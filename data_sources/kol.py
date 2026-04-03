@@ -13,11 +13,11 @@ def get_kol_tweets(kol_list=None) -> list[dict]:
     headers = {"X-API-Key": TWITTER_API_KEY}
     results = []
 
-    for kol in kols:
+    for handle in kols:
         try:
             resp = requests.get(
                 "https://api.twitterapi.io/twitter/user/last_tweets",
-                params={"userName": kol["handle"]},
+                params={"userName": handle},
                 headers=headers,
                 timeout=15,
             )
@@ -38,8 +38,8 @@ def get_kol_tweets(kol_list=None) -> list[dict]:
                     continue
 
                 results.append({
-                    "kol": kol["name"],
-                    "handle": kol["handle"],
+                    "kol": f"@{handle}",
+                    "handle": handle,
                     "text": tweet["text"],
                     "created_at": tweet["createdAt"],
                     "likes": tweet.get("likeCount", 0),
@@ -49,12 +49,12 @@ def get_kol_tweets(kol_list=None) -> list[dict]:
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 429:
                 # Rate limited — wait and retry once
-                print(f"    ⏳ Rate limited on @{kol['handle']}, waiting 10s...")
+                print(f"    ⏳ Rate limited on @{handle}, waiting 10s...")
                 time.sleep(10)
                 try:
                     resp = requests.get(
                         "https://api.twitterapi.io/twitter/user/last_tweets",
-                        params={"userName": kol["handle"]},
+                        params={"userName": handle},
                         headers=headers,
                         timeout=15,
                     )
@@ -70,8 +70,8 @@ def get_kol_tweets(kol_list=None) -> list[dict]:
                         if tweet.get("text", "").startswith("RT @"):
                             continue
                         results.append({
-                            "kol": kol["name"],
-                            "handle": kol["handle"],
+                            "kol": f"@{handle}",
+                            "handle": handle,
                             "text": tweet["text"],
                             "created_at": tweet["createdAt"],
                             "likes": tweet.get("likeCount", 0),
@@ -79,12 +79,12 @@ def get_kol_tweets(kol_list=None) -> list[dict]:
                             "views": tweet.get("viewCount", 0),
                         })
                 except Exception as retry_e:
-                    print(f"    ⚠️ Retry failed for @{kol['handle']}: {retry_e}")
+                    print(f"    ⚠️ Retry failed for @{handle}: {retry_e}")
             else:
-                print(f"    ⚠️ Could not fetch @{kol['handle']}: {e}")
+                print(f"    ⚠️ Could not fetch @{handle}: {e}")
             continue
         except Exception as e:
-            print(f"    ⚠️ Could not fetch @{kol['handle']}: {e}")
+            print(f"    ⚠️ Could not fetch @{handle}: {e}")
             continue
 
         time.sleep(3)
