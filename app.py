@@ -203,23 +203,32 @@ def stream():
 
     def generate():
         import threading
+        import traceback
 
         def worker():
             try:
                 run_for_email(email, status_callback=on_status)
             except Exception as e:
-                q.put(json.dumps({"step_id": 999, "message": f"Error: {e}", "status": "error"}))
+                tb = traceback.format_exc()
+                print(f"[stream] Worker crashed: {e}\n{tb}")
+                q.put(json.dumps({"step_id": "crash", "message": f"Error: {e}", "status": "error"}))
+                q.put(json.dumps({"step_id": "done", "message": "Pipeline failed. Check server logs.", "status": "done"}))
             finally:
                 q.put(None)  # sentinel
 
         t = threading.Thread(target=worker)
         t.start()
 
-        while True:
-            item = q.get()
-            if item is None:
-                break
-            yield f"data: {item}\n\n"
+        try:
+            while True:
+                item = q.get(timeout=120)
+                if item is None:
+                    break
+                yield f"data: {item}\n\n"
+        except queue.Empty:
+            print("[stream] Timed out waiting for worker after 120s")
+            yield f"data: {json.dumps({'step_id': 'timeout', 'message': 'Request timed out after 120s', 'status': 'error'})}\n\n"
+            yield f"data: {json.dumps({'step_id': 'done', 'message': 'Timed out', 'status': 'done'})}\n\n"
 
     return Response(generate(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
