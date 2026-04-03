@@ -72,8 +72,12 @@ def run_for_email(email: str, status_callback=None):
     update("claude", "Brief generated", "ok")
 
     update("email", f"Sending to {email}...", "loading")
-    send_email_to(briefing, email)
-    update("email", f"Briefing sent to {email}!", "done")
+    try:
+        send_email_to(briefing, email)
+        update("email", f"Briefing sent to {email}!", "done")
+    except Exception as e:
+        update("email", f"Email failed: {e}", "error")
+        update("done", "Briefing generated but email delivery failed. Check server logs for [email] details.", "done")
 
 
 def run():

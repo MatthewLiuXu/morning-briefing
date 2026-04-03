@@ -98,10 +98,17 @@ def send_email(briefing: str) -> bool:
     date_str, _, html = _build_briefing_html(briefing)
     subject = f"Crypto Morning Brief — {date_str}"
 
+    print(f"[email] send_email called for {recipients}")
+    print(f"[email] GMAIL_ADDRESS={'set' if GMAIL_ADDRESS else 'NOT SET'} ('{GMAIL_ADDRESS}')")
+    print(f"[email] GMAIL_APP_PASSWORD={'set' if GMAIL_APP_PASSWORD else 'NOT SET'} (len={len(GMAIL_APP_PASSWORD) if GMAIL_APP_PASSWORD else 0})")
+    print(f"[email] RESEND_API_KEY={'set' if RESEND_API_KEY else 'NOT SET'}")
+
     try:
         if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
+            print(f"[email] Using Gmail SMTP via {GMAIL_ADDRESS}")
             _send_via_gmail(recipients, subject, html)
         elif RESEND_API_KEY:
+            print(f"[email] Falling back to Resend (Gmail credentials missing)")
             _send_via_resend(recipients, subject, html)
         else:
             print("⏭️  Email delivery skipped (no Gmail or Resend credentials)")
@@ -119,9 +126,16 @@ def send_email_to(briefing: str, to_email: str) -> bool:
     date_str, _, html = _build_briefing_html(briefing)
     subject = f"Crypto Morning Brief — {date_str}"
 
+    print(f"[email] send_email_to called for {to_email}")
+    print(f"[email] GMAIL_ADDRESS={'set' if GMAIL_ADDRESS else 'NOT SET'} ('{GMAIL_ADDRESS}')")
+    print(f"[email] GMAIL_APP_PASSWORD={'set' if GMAIL_APP_PASSWORD else 'NOT SET'} (len={len(GMAIL_APP_PASSWORD) if GMAIL_APP_PASSWORD else 0})")
+    print(f"[email] RESEND_API_KEY={'set' if RESEND_API_KEY else 'NOT SET'}")
+
     if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
+        print(f"[email] Using Gmail SMTP via {GMAIL_ADDRESS}")
         _send_via_gmail([to_email], subject, html)
     elif RESEND_API_KEY:
+        print(f"[email] Falling back to Resend (Gmail credentials missing)")
         _send_via_resend([to_email], subject, html)
     else:
         raise RuntimeError("No email credentials configured (set GMAIL_ADDRESS + GMAIL_APP_PASSWORD, or RESEND_API_KEY)")
