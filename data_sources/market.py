@@ -1,10 +1,10 @@
 import requests
 from config import PORTFOLIO_TOKENS
 
-def get_market_data() -> dict:
+def get_market_data(portfolio_tokens=None) -> dict:
     """Fetch 24h price, volume, market cap for portfolio tokens + BTC dominance."""
-
-    ids = ",".join(PORTFOLIO_TOKENS.keys())
+    tokens_map = portfolio_tokens if portfolio_tokens is not None else PORTFOLIO_TOKENS
+    ids = ",".join(tokens_map.keys())
     url = "https://api.coingecko.com/api/v3/coins/markets"
     params = {
         "vs_currency": "usd",

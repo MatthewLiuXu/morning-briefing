@@ -5,14 +5,15 @@ from email.utils import parsedate_to_datetime
 from config import CRYPTO_KOLS, TWITTER_API_KEY
 
 
-def get_kol_tweets() -> list[dict]:
+def get_kol_tweets(kol_list=None) -> list[dict]:
     """Fetch tweets from the last 24 hours for tracked crypto KOLs."""
+    kols = kol_list if kol_list is not None else CRYPTO_KOLS
 
     cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     headers = {"X-API-Key": TWITTER_API_KEY}
     results = []
 
-    for kol in CRYPTO_KOLS:
+    for kol in kols:
         try:
             resp = requests.get(
                 "https://api.twitterapi.io/twitter/user/last_tweets",

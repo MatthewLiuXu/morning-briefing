@@ -11,11 +11,12 @@ COINPAPRIKA_IDS = {
 }
 
 
-def get_social_metrics() -> list[dict]:
+def get_social_metrics(portfolio_tokens=None) -> list[dict]:
     """Fetch community data for portfolio tokens from CoinPaprika."""
+    tokens_map = portfolio_tokens if portfolio_tokens is not None else PORTFOLIO_TOKENS
 
     results = []
-    for token_id, token in PORTFOLIO_TOKENS.items():
+    for token_id, token in tokens_map.items():
         cp_id = COINPAPRIKA_IDS.get(token_id)
         if not cp_id:
             continue

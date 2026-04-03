@@ -1,3 +1,4 @@
+import base64
 import requests
 import json
 import smtplib
@@ -5,7 +6,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 from config import (SLACK_WEBHOOK_URL, RESEND_API_KEY, EMAIL_FROM, EMAIL_TO,
-                    GMAIL_ADDRESS, GMAIL_APP_PASSWORD, SENDGRID_API_KEY)
+                    GMAIL_ADDRESS, GMAIL_APP_PASSWORD, SENDGRID_API_KEY,
+                    GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, GMAIL_REFRESH_TOKEN)
 
 
 def post_to_slack(briefing: str) -> bool:
@@ -51,6 +53,32 @@ def _build_briefing_html(briefing: str) -> tuple[str, str, str]:
 </div>
 </div>"""
     return date_str, timestamp, html
+
+
+def _send_via_gmail_api(to_emails: list[str], subject: str, html: str) -> bool:
+    """Send an email via Gmail API (OAuth2, HTTPS — no SMTP ports needed)."""
+    from google.auth.transport.requests import Request
+    from google.oauth2.credentials import Credentials
+    from googleapiclient.discovery import build
+
+    creds = Credentials(
+        token=None,
+        refresh_token=GMAIL_REFRESH_TOKEN,
+        client_id=GMAIL_CLIENT_ID,
+        client_secret=GMAIL_CLIENT_SECRET,
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    creds.refresh(Request())
+    service = build("gmail", "v1", credentials=creds)
+
+    for to_email in to_emails:
+        msg = MIMEText(html, "html")
+        msg["to"] = to_email
+        msg["from"] = GMAIL_ADDRESS
+        msg["subject"] = subject
+        raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        service.users().messages().send(userId="me", body={"raw": raw}).execute()
+    return True
 
 
 def _send_via_sendgrid(to_emails: list[str], subject: str, html: str) -> bool:
@@ -110,8 +138,10 @@ def _send_via_resend(to_emails: list[str], subject: str, html: str) -> bool:
 
 
 def _try_send(to_emails: list[str], subject: str, html: str) -> bool:
-    """Try each configured email provider in order: SendGrid > Gmail > Resend."""
+    """Try each configured email provider in order: Gmail API > SendGrid > Gmail SMTP > Resend."""
     providers = []
+    if GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN:
+        providers.append(("Gmail API", lambda: _send_via_gmail_api(to_emails, subject, html)))
     if SENDGRID_API_KEY:
         providers.append(("SendGrid", lambda: _send_via_sendgrid(to_emails, subject, html)))
     if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:

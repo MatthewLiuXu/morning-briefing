@@ -10,29 +10,41 @@ from data_sources.kol import get_kol_tweets
 from data_sources.portfolio import get_portfolio
 from enrichment import enrich_data
 from synthesizer import synthesize_briefing
-from delivery import post_to_slack, send_email, send_email_to
+from delivery import post_to_slack, send_email
 
 
-def run_for_email(email: str, status_callback=None):
-    """Run the pipeline and email the result to a specific address.
+def run_pipeline(config=None, status_callback=None):
+    """Run the pipeline and return the briefing text.
 
-    If status_callback is provided, it's called with (step_name, status)
-    for real-time progress updates.
+    config can override: portfolio, funding_symbols, kols, and toggle
+    data sources on/off via enabled_sources.
     """
+    cfg = config or {}
+
     def update(step_id, message, status="ok"):
         if status_callback:
             status_callback(step_id, message, status)
         print(f"  [{status}] {message}")
 
     errors = []
+    portfolio_tokens = cfg.get("portfolio") or None
+    funding_symbols = cfg.get("funding_symbols") or None
+    kol_list = cfg.get("kols") or None
+    enabled = cfg.get("enabled_sources", {})
 
     steps = [
-        ("market",   "Market data",    lambda: get_market_data()),
-        ("funding",  "Funding rates",  lambda: get_funding_rates()),
-        ("social",   "Social metrics", lambda: get_social_metrics()),
-        ("trending", "Trending tokens",lambda: get_trending_tokens()),
-        ("news",     "News",           lambda: get_news()),
-        ("kol",      "KOL tweets",     lambda: get_kol_tweets()),
+        ("market",   "Market data",    lambda: get_market_data(portfolio_tokens=portfolio_tokens),
+         enabled.get("market", True)),
+        ("funding",  "Funding rates",  lambda: get_funding_rates(funding_symbols=funding_symbols),
+         enabled.get("funding", True)),
+        ("social",   "Social metrics", lambda: get_social_metrics(portfolio_tokens=portfolio_tokens),
+         enabled.get("social", True)),
+        ("trending", "Trending tokens", lambda: get_trending_tokens(),
+         enabled.get("trending", True)),
+        ("news",     "News",           lambda: get_news(),
+         enabled.get("news", True)),
+        ("kol",      "KOL tweets",     lambda: get_kol_tweets(kol_list=kol_list),
+         enabled.get("kol", True)),
     ]
 
     defaults = {
@@ -42,7 +54,11 @@ def run_for_email(email: str, status_callback=None):
     }
 
     results = {}
-    for step_id, label, fetch_fn in steps:
+    for step_id, label, fetch_fn, is_enabled in steps:
+        if not is_enabled:
+            results[step_id] = defaults[step_id]
+            update(step_id, f"{label} skipped", "ok")
+            continue
         update(step_id, f"Fetching {label.lower()}...", "loading")
         try:
             results[step_id] = fetch_fn()
@@ -56,7 +72,7 @@ def run_for_email(email: str, status_callback=None):
             results[step_id] = defaults[step_id]
             update(step_id, f"{label} failed", "error")
 
-    portfolio = get_portfolio()
+    portfolio = portfolio_tokens if portfolio_tokens else get_portfolio()
 
     update("enrich", "Enriching data...", "loading")
     enriched = enrich_data(
@@ -69,15 +85,9 @@ def run_for_email(email: str, status_callback=None):
 
     update("claude", "Generating brief with Claude AI...", "loading")
     briefing = synthesize_briefing(enriched)
-    update("claude", "Brief generated", "ok")
+    update("claude", "Brief generated", "done")
 
-    update("email", f"Sending to {email}...", "loading")
-    try:
-        send_email_to(briefing, email)
-        update("email", f"Briefing sent to {email}!", "done")
-    except Exception as e:
-        update("email", f"Email failed: {e}", "error")
-        update("done", "Briefing generated but email delivery failed. Check server logs for [email] details.", "done")
+    return briefing
 
 
 def run():

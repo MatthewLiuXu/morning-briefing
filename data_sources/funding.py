@@ -1,8 +1,9 @@
 import requests
 from config import FUNDING_SYMBOLS
 
-def get_funding_rates() -> list[dict]:
+def get_funding_rates(funding_symbols=None) -> list[dict]:
     """Fetch latest funding rates from Hyperliquid perps."""
+    symbols = funding_symbols if funding_symbols is not None else FUNDING_SYMBOLS
 
     url = "https://api.hyperliquid.xyz/info"
     resp = requests.post(url, json={"type": "metaAndAssetCtxs"}, timeout=15)
@@ -14,8 +15,8 @@ def get_funding_rates() -> list[dict]:
     meta = data[0]["universe"]
     contexts = data[1]
 
-    # Map FUNDING_SYMBOLS (e.g. "BTCUSDT") to bare names (e.g. "BTC")
-    target_names = {sym.replace("USDT", ""): sym for sym in FUNDING_SYMBOLS}
+    # Map symbols (e.g. "BTCUSDT") to bare names (e.g. "BTC")
+    target_names = {sym.replace("USDT", ""): sym for sym in symbols}
 
     results = []
     for asset_info, ctx in zip(meta, contexts):
