@@ -5,7 +5,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from datetime import datetime
 from config import (SLACK_WEBHOOK_URL, RESEND_API_KEY, EMAIL_FROM, EMAIL_TO,
-                    GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
+                    GMAIL_ADDRESS, GMAIL_APP_PASSWORD, SENDGRID_API_KEY)
 
 
 def post_to_slack(briefing: str) -> bool:
@@ -53,6 +53,27 @@ def _build_briefing_html(briefing: str) -> tuple[str, str, str]:
     return date_str, timestamp, html
 
 
+def _send_via_sendgrid(to_emails: list[str], subject: str, html: str) -> bool:
+    """Send an email via SendGrid API."""
+    resp = requests.post(
+        "https://api.sendgrid.com/v3/mail/send",
+        headers={
+            "Authorization": f"Bearer {SENDGRID_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "personalizations": [{"to": [{"email": e} for e in to_emails]}],
+            "from": {"email": EMAIL_FROM},
+            "subject": subject,
+            "content": [{"type": "text/html", "value": html}],
+        },
+        timeout=15,
+    )
+    if resp.status_code in (200, 202):
+        return True
+    raise RuntimeError(f"SendGrid failed: {resp.status_code} — {resp.text}")
+
+
 def _send_via_gmail(to_emails: list[str], subject: str, html: str) -> bool:
     """Send an email via Gmail SMTP using an App Password."""
     msg = MIMEMultipart("alternative")
@@ -61,7 +82,7 @@ def _send_via_gmail(to_emails: list[str], subject: str, html: str) -> bool:
     msg["Subject"] = subject
     msg.attach(MIMEText(html, "html"))
 
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=10) as server:
         server.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
         server.sendmail(GMAIL_ADDRESS, to_emails, msg.as_string())
     return True
@@ -88,8 +109,33 @@ def _send_via_resend(to_emails: list[str], subject: str, html: str) -> bool:
     raise RuntimeError(f"Resend failed: {resp.status_code} — {resp.text}")
 
 
+def _try_send(to_emails: list[str], subject: str, html: str) -> bool:
+    """Try each configured email provider in order: SendGrid > Gmail > Resend."""
+    providers = []
+    if SENDGRID_API_KEY:
+        providers.append(("SendGrid", lambda: _send_via_sendgrid(to_emails, subject, html)))
+    if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
+        providers.append(("Gmail SMTP", lambda: _send_via_gmail(to_emails, subject, html)))
+    if RESEND_API_KEY:
+        providers.append(("Resend", lambda: _send_via_resend(to_emails, subject, html)))
+
+    if not providers:
+        raise RuntimeError("No email credentials configured (set SENDGRID_API_KEY, GMAIL_ADDRESS + GMAIL_APP_PASSWORD, or RESEND_API_KEY)")
+
+    for name, send_fn in providers:
+        try:
+            print(f"[email] Trying {name}...")
+            send_fn()
+            print(f"[email] {name} succeeded")
+            return True
+        except Exception as e:
+            print(f"[email] {name} failed: {e}")
+
+    raise RuntimeError("All email providers failed — check server logs for details")
+
+
 def send_email(briefing: str) -> bool:
-    """Send the morning brief via email (Gmail SMTP or Resend fallback)."""
+    """Send the morning brief via email."""
     if not EMAIL_TO:
         print("⏭️  Email delivery skipped (no EMAIL_TO)")
         return False
@@ -98,21 +144,8 @@ def send_email(briefing: str) -> bool:
     date_str, _, html = _build_briefing_html(briefing)
     subject = f"Crypto Morning Brief — {date_str}"
 
-    print(f"[email] send_email called for {recipients}")
-    print(f"[email] GMAIL_ADDRESS={'set' if GMAIL_ADDRESS else 'NOT SET'} ('{GMAIL_ADDRESS}')")
-    print(f"[email] GMAIL_APP_PASSWORD={'set' if GMAIL_APP_PASSWORD else 'NOT SET'} (len={len(GMAIL_APP_PASSWORD) if GMAIL_APP_PASSWORD else 0})")
-    print(f"[email] RESEND_API_KEY={'set' if RESEND_API_KEY else 'NOT SET'}")
-
     try:
-        if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
-            print(f"[email] Using Gmail SMTP via {GMAIL_ADDRESS}")
-            _send_via_gmail(recipients, subject, html)
-        elif RESEND_API_KEY:
-            print(f"[email] Falling back to Resend (Gmail credentials missing)")
-            _send_via_resend(recipients, subject, html)
-        else:
-            print("⏭️  Email delivery skipped (no Gmail or Resend credentials)")
-            return False
+        _try_send(recipients, subject, html)
     except Exception as e:
         print(f"❌ Email delivery failed: {e}")
         return False
@@ -125,18 +158,5 @@ def send_email_to(briefing: str, to_email: str) -> bool:
     """Send the morning brief to a specific email address."""
     date_str, _, html = _build_briefing_html(briefing)
     subject = f"Crypto Morning Brief — {date_str}"
-
-    print(f"[email] send_email_to called for {to_email}")
-    print(f"[email] GMAIL_ADDRESS={'set' if GMAIL_ADDRESS else 'NOT SET'} ('{GMAIL_ADDRESS}')")
-    print(f"[email] GMAIL_APP_PASSWORD={'set' if GMAIL_APP_PASSWORD else 'NOT SET'} (len={len(GMAIL_APP_PASSWORD) if GMAIL_APP_PASSWORD else 0})")
-    print(f"[email] RESEND_API_KEY={'set' if RESEND_API_KEY else 'NOT SET'}")
-
-    if GMAIL_ADDRESS and GMAIL_APP_PASSWORD:
-        print(f"[email] Using Gmail SMTP via {GMAIL_ADDRESS}")
-        _send_via_gmail([to_email], subject, html)
-    elif RESEND_API_KEY:
-        print(f"[email] Falling back to Resend (Gmail credentials missing)")
-        _send_via_resend([to_email], subject, html)
-    else:
-        raise RuntimeError("No email credentials configured (set GMAIL_ADDRESS + GMAIL_APP_PASSWORD, or RESEND_API_KEY)")
+    _try_send([to_email], subject, html)
     return True

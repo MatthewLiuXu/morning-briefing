@@ -13,6 +13,7 @@ EMAIL_FROM = os.getenv("EMAIL_FROM", "briefing@resend.dev")
 EMAIL_TO = os.getenv("EMAIL_TO")  # comma-separated list of recipient emails
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
+SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 
 # --- Twitter / KOL Tracking ---
 TWITTER_API_KEY = os.getenv("TWITTER_API_KEY")
