@@ -3,7 +3,7 @@ services:
     name: morning-briefing
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --worker-class gevent --timeout 120
     envVars:
       - key: ANTHROPIC_API_KEY
         sync: false
@@ -14,6 +14,10 @@ services:
       - key: EMAIL_FROM
         value: onboarding@resend.dev
       - key: TWITTER_API_KEY
+        sync: false
+      - key: GMAIL_ADDRESS
+        sync: false
+      - key: GMAIL_APP_PASSWORD
         sync: false
       - key: PYTHON_VERSION
         value: "3.12"
